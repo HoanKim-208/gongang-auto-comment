@@ -44,13 +44,37 @@ def goi_api(duong_dan, tham_so=None, du_lieu=None):
 
 
 def tim_bai_theo_tu_khoa(page_id, tu_khoa):
-    """Tìm bài mới nhất của Page có caption chứa từ khoá."""
+    """Tìm bài mới nhất của Page có caption chứa từ khoá.
+
+    Quét cả hai nguồn vì Reel không phải lúc nào cũng nằm trong /feed:
+      - /feed        : bài viết thường, ảnh, album
+      - /video_reels : thước phim (Reel)
+    """
     tu_khoa = tu_khoa.lower()
-    kq = goi_api(f"{page_id}/feed", {"fields": "id,message,created_time", "limit": 25})
-    for bai in kq.get("data", []):
-        if tu_khoa in (bai.get("message") or "").lower():
-            return bai
-    return None
+    ung_vien = []
+
+    for duong_dan, truong in (
+        (f"{page_id}/feed", "id,message,created_time"),
+        (f"{page_id}/video_reels", "id,description,created_time"),
+    ):
+        try:
+            kq = goi_api(duong_dan, {"fields": truong, "limit": 25})
+        except RuntimeError as e:
+            print(f"  (không đọc được {duong_dan}: {e})")
+            continue
+
+        data = kq.get("data", [])
+        print(f"  {duong_dan}: lấy được {len(data)} mục")
+        for bai in data:
+            caption = bai.get("message") or bai.get("description") or ""
+            if tu_khoa in caption.lower():
+                ung_vien.append(bai)
+
+    if not ung_vien:
+        return None
+
+    ung_vien.sort(key=lambda b: b.get("created_time") or "", reverse=True)
+    return ung_vien[0]
 
 
 def da_co_comment_link(post_id):
