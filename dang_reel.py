@@ -164,6 +164,18 @@ def main():
     if thieu:
         print(f"Thiếu biến môi trường: {', '.join(thieu)}")
         return 1
+
+    if "--thu-quyen" in sys.argv:
+        # Chỉ mở phiên upload để thử quyền pages_manage_posts, KHÔNG đăng gì.
+        token = lay_token_page(os.environ["FB_PAGE_ID"])
+        try:
+            kq = goi_api_tho(f"{os.environ['FB_PAGE_ID']}/video_reels", du_lieu={"upload_phase": "start"}, token=token)
+        except RuntimeError as e:
+            print(f"[THỬ QUYỀN] HỎNG: {e}")
+            return 1
+        print(f"[THỬ QUYỀN] OK - token đăng được Reel (phiên thử {kq.get('video_id')}, không đăng gì)")
+        return 0
+
     if not os.path.isdir(THU_MUC_CHO):
         print("Không có thư mục cho-dang/")
         return 0
