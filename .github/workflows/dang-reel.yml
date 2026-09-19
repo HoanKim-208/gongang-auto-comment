@@ -1,0 +1,51 @@
+name: Hẹn giờ Reel Gọn Gàng Shop
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cho-dang/**"
+  workflow_dispatch:   # bấm chạy tay trên GitHub
+
+permissions:
+  contents: write
+
+# Dùng chung nhóm với workflow comment để hai bên không ghi đè lich.json của nhau
+concurrency:
+  group: dang-comment
+  cancel-in-progress: false
+
+jobs:
+  hen-gio-reel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tải video lên Facebook và hẹn giờ
+        id: hen
+        continue-on-error: true
+        env:
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 dang_reel.py
+
+      - name: Ghi lại kết quả
+        run: |
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git config user.name "github-actions"
+            git config user.email "github-actions@users.noreply.github.com"
+            git add -A -- cho-dang lich.json
+            if [[ -d da-hen ]]; then git add -A -- da-hen; fi
+            git commit -m "Hẹn giờ Reel + thêm lịch comment"
+            git pull --rebase
+            git push
+          else
+            echo "Không có thay đổi"
+          fi
+
+      - name: Báo lỗi nếu có bài hỏng
+        if: steps.hen.outcome == 'failure'
+        run: |
+          echo "Có bài hẹn không thành công — xem trường 'loi' trong file .json ở cho-dang/"
+          exit 1
