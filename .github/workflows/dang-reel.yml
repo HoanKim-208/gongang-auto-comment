@@ -6,6 +6,11 @@ on:
     paths:
       - "cho-dang/**"
   workflow_dispatch:   # bấm chạy tay trên GitHub
+    inputs:
+      thu_quyen:
+        description: "Chỉ thử quyền đăng Reel, không đăng gì"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -28,7 +33,7 @@ jobs:
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           PYTHONDONTWRITEBYTECODE: "1"
-        run: python3 dang_reel.py
+        run: python3 dang_reel.py ${{ inputs.thu_quyen && '--thu-quyen' || '' }}
 
       - name: Ghi lại kết quả
         run: |
