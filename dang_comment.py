@@ -3,9 +3,13 @@
 Tự động đăng comment điều hướng dưới bài mới của Facebook Page Gọn Gàng Shop.
 
 Cách hoạt động:
-- Đọc lich.json, tìm các mục đã tới giờ và chưa đăng.
+- Đọc lich.json (kiểu cũ, 1 file nhiều mục) và mọi file lich/*.json
+  (kiểu mới, mỗi bài 1 file - thêm bài chỉ là upload 1 file mới, không phải
+  ghi đè file chung nên không đè mất trạng thái máy vừa ghi).
+- Tìm các mục đã tới giờ và chưa đăng.
 - Tìm bài viết/Reel mới nhất của Page có caption chứa "tu_khoa" của mục đó.
-- Kiểm tra chống trùng: bài đã có comment chứa gongangshop.vn thì bỏ qua.
+- Chống trùng: bài đã có comment của chính Page trùng nội dung (hoặc chứa
+  gongangshop.vn) thì không đăng nữa.
 - Đăng comment dưới danh nghĩa Page, rồi ghi lại trạng thái vào lich.json.
 
 Biến môi trường cần có:
@@ -22,7 +26,9 @@ from datetime import datetime, timedelta, timezone
 
 API = "https://graph.facebook.com/v21.0"
 GIO_VN = timezone(timedelta(hours=7))
-FILE_LICH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lich.json")
+GOC = os.path.dirname(os.path.abspath(__file__))
+FILE_LICH = os.path.join(GOC, "lich.json")
+THU_MUC_LICH = os.path.join(GOC, "lich")
 
 HAN_CHOT_GIO = 8
 
@@ -99,12 +105,108 @@ def tim_bai_theo_tu_khoa(page_id, tu_khoa):
     return ung_vien[0]
 
 
-def da_co_comment_link(post_id):
-    kq = goi_api(f"{post_id}/comments", {"fields": "message", "limit": 50})
+def _gon(chu):
+    return " ".join((chu or "").split()).lower()
+
+
+def tim_comment_da_co(post_id, page_id, noi_dung):
+    """Trả về (loai, comment_id) nếu bài đã có comment của shop, ngược lại None.
+
+    loai = "cua_minh": Page đã đăng đúng nội dung này (lượt trước đăng xong
+           nhưng chưa kịp ghi trạng thái) -> coi như xong.
+    loai = "link":    đã có comment khác chứa link web -> đánh "trung".
+    """
+    kq = goi_api(f"{post_id}/comments", {"fields": "message,from", "limit": 100})
+    muc_tieu = _gon(noi_dung)
     for cmt in kq.get("data", []):
-        if "gongangshop.vn" in (cmt.get("message") or "").lower():
+        tin = cmt.get("message") or ""
+        cua_page = (cmt.get("from") or {}).get("id") == str(page_id)
+        if cua_page and _gon(tin) == muc_tieu:
+            return "cua_minh", cmt.get("id", "")
+        if "gongangshop.vn" in tin.lower():
+            return "link", cmt.get("id", "")
+    return None
+
+
+def doc_lich():
+    """Trả về danh sách (duong_file, du_lieu, danh_sach_muc).
+
+    lich.json là 1 mảng; mỗi file lich/*.json là 1 mục (object) hoặc 1 mảng.
+    """
+    nguon = []
+    if os.path.exists(FILE_LICH):
+        with open(FILE_LICH, encoding="utf-8") as f:
+            du_lieu = json.load(f)
+        nguon.append((FILE_LICH, du_lieu, du_lieu))
+    if os.path.isdir(THU_MUC_LICH):
+        for ten in sorted(os.listdir(THU_MUC_LICH)):
+            if not ten.endswith(".json"):
+                continue
+            duong = os.path.join(THU_MUC_LICH, ten)
+            try:
+                with open(duong, encoding="utf-8") as f:
+                    du_lieu = json.load(f)
+            except ValueError as e:
+                print(f"[LỖI] {ten} không phải JSON hợp lệ: {e}")
+                continue
+            nguon.append((duong, du_lieu, du_lieu if isinstance(du_lieu, list) else [du_lieu]))
+    return nguon
+
+
+def ghi_file(duong, du_lieu):
+    with open(duong, "w", encoding="utf-8") as f:
+        json.dump(du_lieu, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def xu_ly_muc(muc, page_id, bay_gio):
+    """Xử lý 1 mục lịch. Trả về True nếu mục có thay đổi cần ghi lại."""
+    if muc.get("trang_thai") != "cho":
+        return False
+
+    gio_hen = datetime.fromisoformat(muc["thoi_gian"]).replace(tzinfo=GIO_VN)
+    if bay_gio < gio_hen:
+        return False
+
+    ten = muc.get("ten", muc["tu_khoa"])
+
+    if bay_gio > gio_hen + timedelta(hours=HAN_CHOT_GIO):
+        muc["trang_thai"] = "qua_han"
+        muc["ghi_chu"] = f"Quá {HAN_CHOT_GIO} tiếng vẫn không tìm thấy bài"
+        print(f"[QUÁ HẠN] {ten}")
+        return True
+
+    try:
+        bai = tim_bai_theo_tu_khoa(page_id, muc["tu_khoa"])
+    except RuntimeError as e:
+        print(f"[LỖI] {ten}: {e}")
+        return False
+
+    if not bai:
+        print(f"[CHỜ] {ten}: chưa thấy bài chứa '{muc['tu_khoa']}', thử lại lần sau")
+        return False
+
+    try:
+        da_co = tim_comment_da_co(bai["id"], page_id, muc["noi_dung"])
+        if da_co and da_co[0] == "cua_minh":
+            muc.update(trang_thai="xong", post_id=bai["id"], comment_id=da_co[1],
+                       ghi_chu="comment đã có sẵn từ lượt trước, không đăng lại")
+            print(f"[ĐÃ CÓ] {ten}: comment đã lên từ lượt trước, chỉ ghi lại trạng thái")
             return True
-    return False
+        if da_co:
+            muc.update(trang_thai="trung", post_id=bai["id"])
+            print(f"[BỎ QUA] {ten}: bài đã có comment chứa link web")
+            return True
+
+        kq = goi_api(f"{bai['id']}/comments", du_lieu={"message": muc["noi_dung"]})
+    except RuntimeError as e:
+        print(f"[LỖI] {ten}: {e}")
+        return False
+
+    muc.update(trang_thai="xong", post_id=bai["id"], comment_id=kq.get("id", ""),
+               dang_luc=bay_gio.strftime("%Y-%m-%d %H:%M"))
+    print(f"[XONG] {ten} -> bài {bai['id']}")
+    return True
 
 
 def main():
@@ -114,67 +216,19 @@ def main():
         return 1
 
     page_id = os.environ["FB_PAGE_ID"]
-    with open(FILE_LICH, encoding="utf-8") as f:
-        lich = json.load(f)
-
     bay_gio = datetime.now(GIO_VN)
-    co_thay_doi = False
+    so_file_doi = 0
 
-    for muc in lich:
-        if muc.get("trang_thai") != "cho":
-            continue
-
-        gio_hen = datetime.fromisoformat(muc["thoi_gian"]).replace(tzinfo=GIO_VN)
-        if bay_gio < gio_hen:
-            continue
-
-        ten = muc.get("ten", muc["tu_khoa"])
-
-        if bay_gio > gio_hen + timedelta(hours=HAN_CHOT_GIO):
-            muc["trang_thai"] = "qua_han"
-            muc["ghi_chu"] = f"Quá {HAN_CHOT_GIO} tiếng vẫn không tìm thấy bài"
-            co_thay_doi = True
-            print(f"[QUÁ HẠN] {ten}")
-            continue
-
-        try:
-            bai = tim_bai_theo_tu_khoa(page_id, muc["tu_khoa"])
-        except RuntimeError as e:
-            print(f"[LỖI] {ten}: {e}")
-            continue
-
-        if not bai:
-            print(f"[CHỜ] {ten}: chưa thấy bài chứa '{muc['tu_khoa']}', thử lại lần sau")
-            continue
-
-        try:
-            if da_co_comment_link(bai["id"]):
-                muc["trang_thai"] = "trung"
-                muc["post_id"] = bai["id"]
+    for duong, du_lieu, ds_muc in doc_lich():
+        co_thay_doi = False
+        for muc in ds_muc:
+            if xu_ly_muc(muc, page_id, bay_gio):
                 co_thay_doi = True
-                print(f"[BỎ QUA] {ten}: bài đã có comment chứa link web")
-                continue
+        if co_thay_doi:
+            ghi_file(duong, du_lieu)
+            so_file_doi += 1
 
-            kq = goi_api(f"{bai['id']}/comments", du_lieu={"message": muc["noi_dung"]})
-        except RuntimeError as e:
-            print(f"[LỖI] {ten}: {e}")
-            continue
-
-        muc["trang_thai"] = "xong"
-        muc["post_id"] = bai["id"]
-        muc["comment_id"] = kq.get("id", "")
-        muc["dang_luc"] = bay_gio.strftime("%Y-%m-%d %H:%M")
-        co_thay_doi = True
-        print(f"[XONG] {ten} -> bài {bai['id']}")
-
-    if co_thay_doi:
-        with open(FILE_LICH, "w", encoding="utf-8") as f:
-            json.dump(lich, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-        print("Đã cập nhật lich.json")
-    else:
-        print("Không có gì để làm")
-
+    print(f"Đã cập nhật {so_file_doi} file lịch" if so_file_doi else "Không có gì để làm")
     return 0
 
 

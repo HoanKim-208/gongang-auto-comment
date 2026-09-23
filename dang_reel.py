@@ -15,9 +15,14 @@ Cách dùng: bỏ vào thư mục cho-dang/ một cặp file cùng tên
 
 Script sẽ:
   1. Tải video lên Facebook và hẹn giờ (bài hiện trong MBS -> Đã lên lịch).
-  2. Tự thêm comment vào lich.json, hẹn sau giờ đăng 5 phút.
+  2. Tự tạo lich/<ten>.json cho comment, hẹn sau giờ đăng 5 phút.
   3. Chuyển file .json sang da-hen/ (kèm video_id), xoá file .mp4.
 Lỗi thì ghi "loi" vào file .json, để nguyên trong cho-dang/ và thoát mã 1.
+Hẹn được nhưng Facebook báo video xử lý lỗi -> vẫn chuyển sang da-hen/ (để
+không tải trùng) nhưng workflow báo ĐỎ, xem trường "canh_bao".
+
+Chặn trước khi tải: tu_khoa trùng một mục lịch đang chờ, hoặc đã có trong
+bài cũ gần đây của Page (auto comment sẽ trúng nhầm bài cũ).
 
 Biến môi trường: FB_PAGE_TOKEN, FB_PAGE_ID (giống dang_comment.py).
 """
@@ -31,13 +36,13 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
-from dang_comment import API, goi_api_tho, lay_token_page
+from dang_comment import API, doc_lich, goi_api_tho, lay_token_page, tim_bai_theo_tu_khoa
 
 GIO_VN = timezone(timedelta(hours=7))
 GOC = os.path.dirname(os.path.abspath(__file__))
 THU_MUC_CHO = os.path.join(GOC, "cho-dang")
 THU_MUC_XONG = os.path.join(GOC, "da-hen")
-FILE_LICH = os.path.join(GOC, "lich.json")
+THU_MUC_LICH = os.path.join(GOC, "lich")
 
 # Khung giờ auto comment chạy (cron 20:00-23:55 giờ VN)
 GIO_SOM_NHAT = 20
@@ -83,6 +88,21 @@ def kiem_tra(bai, duong_video, bay_gio):
     if dai is not None and not (3 <= dai <= 90):
         raise LoiBai(f"video dài {dai:.1f}s, Reel chỉ nhận 3-90 giây")
     return gio
+
+
+def kiem_tu_khoa_trung(bai, page_id):
+    """Chặn tu_khoa đụng mục lịch đang chờ hoặc đụng bài cũ của Page."""
+    tk = bai["tu_khoa"].strip().lower()
+    for _, _, ds_muc in doc_lich():
+        for muc in ds_muc:
+            if muc.get("trang_thai") != "cho":
+                continue
+            khac = str(muc.get("tu_khoa", "")).strip().lower()
+            if khac and (khac in tk or tk in khac):
+                raise LoiBai(f"'tu_khoa' đụng mục lịch đang chờ '{muc.get('ten')}' ('{muc.get('tu_khoa')}')")
+    cu = tim_bai_theo_tu_khoa(page_id, tk)
+    if cu:
+        raise LoiBai(f"'tu_khoa' đã có trong bài cũ {cu.get('id')} ({cu.get('created_time', '')[:10]}) - chọn cụm khác")
 
 
 def tai_video_len(page_id, token, duong_video):
@@ -138,19 +158,16 @@ def cho_xu_ly(token, video_id, toi_da_giay=240):
     return trang_thai
 
 
-def them_comment(bai, gio):
-    with open(FILE_LICH, encoding="utf-8") as f:
-        lich = json.load(f)
-    lich.append({
+def them_comment(bai, gio, ten_file):
+    os.makedirs(THU_MUC_LICH, exist_ok=True)
+    muc = {
         "ten": bai["ten"],
         "tu_khoa": bai["tu_khoa"],
         "thoi_gian": (gio + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S"),
         "noi_dung": bai["comment"],
         "trang_thai": "cho",
-    })
-    with open(FILE_LICH, "w", encoding="utf-8") as f:
-        json.dump(lich, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    }
+    ghi_json(os.path.join(THU_MUC_LICH, "reel-" + ten_file), muc)
 
 
 def ghi_json(duong, bai):
@@ -207,6 +224,8 @@ def main():
             if not os.path.exists(duong_video):
                 raise LoiBai(f"thiếu video {os.path.basename(duong_video)}")
             gio = kiem_tra(bai, duong_video, bay_gio)
+            if bai.get("comment"):
+                kiem_tu_khoa_trung(bai, page_id)
             print(f"  tải video lên ({os.path.getsize(duong_video) // 1024} KB)...")
             video_id = tai_video_len(page_id, token, duong_video)
             print(f"  video_id = {video_id}, hẹn giờ {bai['gio_dang']}...")
@@ -224,15 +243,17 @@ def main():
             trang_thai = cho_xu_ly(token, video_id)
         except (LoiBai, RuntimeError) as e:
             trang_thai = {}
-            bai["canh_bao"] = f"đã hẹn nhưng đọc trạng thái video lỗi: {e}"
-            print(f"  [CẢNH BÁO] {bai['canh_bao']}")
+            bai["canh_bao"] = (f"đã hẹn nhưng Facebook báo video lỗi: {e} - "
+                               "vào MBS > Đã lên lịch kiểm tra, cần thì xoá bài và đăng lại")
+            print(f"[CẢNH BÁO] {ten}: {bai['canh_bao']}")
+            co_loi = True
 
         bai.pop("loi", None)
         bai["video_id"] = video_id
         bai["hen_luc"] = bay_gio.strftime("%Y-%m-%d %H:%M")
         bai["trang_thai_video"] = trang_thai.get("video_status", "")
         if bai.get("comment"):
-            them_comment(bai, gio)
+            them_comment(bai, gio, ten_file)
             print(f"  đã thêm comment vào lich.json lúc {(gio + timedelta(minutes=5)):%H:%M}")
         ghi_json(os.path.join(THU_MUC_XONG, ten_file), bai)
         os.remove(duong_json)
