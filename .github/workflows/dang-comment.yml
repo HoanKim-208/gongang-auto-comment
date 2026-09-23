@@ -1,10 +1,15 @@
 name: Đăng comment Gọn Gàng Shop
 
+# Cron của GitHub trễ rất nặng (có đêm chỉ còn 1 lượt lúc ~00:30). Nên thay vì
+# 5 phút gọi 1 lần, mỗi tối chỉ cần 1 lượt khởi động sớm (~18:00 giờ VN), rồi
+# job tự lặp mỗi 5 phút tới 23:59. Lượt khởi động có trễ 2-3 tiếng vẫn kịp
+# trước giờ đăng 22:00. Lượt dự phòng 20:37 chỉ chạy khi lượt đầu không lên
+# (hai lượt chung một hàng đợi nên không bao giờ chạy song song).
 on:
   schedule:
-    # Chạy 5 phút một lần trong khung 20:00-23:55 giờ VN (13:00-16:55 UTC)
-    - cron: "*/5 13-16 * * *"
-  workflow_dispatch:   # cho phép bấm chạy tay trên GitHub
+    - cron: "7 11 * * *"    # 18:07 giờ VN
+    - cron: "37 13 * * *"   # 20:37 giờ VN, dự phòng
+  workflow_dispatch:        # bấm chạy tay: chỉ chạy 1 lượt rồi thoát
 
 permissions:
   contents: write
@@ -16,23 +21,37 @@ concurrency:
 jobs:
   dang-comment:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
-      - name: Đăng comment tới hạn
+      - name: Đăng comment tới hạn (lặp 5 phút/lần tới 23:59)
         env:
           FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
-        run: python3 dang_comment.py
-
-      - name: Ghi lại trạng thái vào lich.json
+          MOT_LAN: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          if [[ -n "$(git status --porcelain lich.json)" ]]; then
-            git config user.name "github-actions"
-            git config user.email "github-actions@users.noreply.github.com"
-            git add lich.json
-            git commit -m "Cập nhật trạng thái lịch comment"
-            git push
-          else
-            echo "lich.json không đổi"
-          fi
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          bat_dau=$(date +%s)
+
+          dong_bo() {
+            git pull --rebase -q || { git rebase --abort 2>/dev/null || true; git reset -q --hard origin/main; }
+          }
+
+          while true; do
+            dong_bo
+            echo "===== $(TZ=Asia/Ho_Chi_Minh date '+%d/%m %H:%M') ====="
+            python3 dang_comment.py || true
+            if [[ -n "$(git status --porcelain -- lich.json lich)" ]]; then
+              git add -A -- lich.json lich
+              git commit -qm "Cập nhật trạng thái lịch comment"
+              git push -q || { dong_bo; git push -q; } || echo "Chưa đẩy được trạng thái, lượt sau thử lại"
+            fi
+
+            [[ "$MOT_LAN" == "true" ]] && break
+            gio=$(TZ=Asia/Ho_Chi_Minh date +%H)
+            (( 10#$gio < 18 )) && { echo "Quá 23:59, nghỉ tới tối mai"; break; }
+            (( $(date +%s) - bat_dau > 20400 )) && { echo "Chạm giới hạn 340 phút"; break; }
+            sleep 300
+          done

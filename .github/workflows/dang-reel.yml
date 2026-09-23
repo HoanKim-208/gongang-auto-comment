@@ -15,9 +15,10 @@ on:
 permissions:
   contents: write
 
-# Dùng chung nhóm với workflow comment để hai bên không ghi đè lich.json của nhau
+# Nhóm riêng: workflow comment chạy dài cả tối, chung nhóm thì Reel phải xếp hàng.
+# Không sợ ghi đè vì Reel chỉ tạo file mới trong lich/, không sửa lich.json.
 concurrency:
-  group: dang-comment
+  group: dang-reel
   cancel-in-progress: false
 
 jobs:
@@ -40,11 +41,11 @@ jobs:
           if [[ -n "$(git status --porcelain)" ]]; then
             git config user.name "github-actions"
             git config user.email "github-actions@users.noreply.github.com"
-            git add -A -- cho-dang lich.json
-            if [[ -d da-hen ]]; then git add -A -- da-hen; fi
+            git add -A -- cho-dang
+            for d in da-hen lich; do if [[ -d $d ]]; then git add -A -- $d; fi; done
             git commit -m "Hẹn giờ Reel + thêm lịch comment"
             git pull --rebase
-            git push
+            git push || { git pull --rebase && git push; }
           else
             echo "Không có thay đổi"
           fi
