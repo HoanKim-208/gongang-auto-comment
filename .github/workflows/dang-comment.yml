@@ -9,6 +9,12 @@ on:
   schedule:
     - cron: "7 11 * * *"    # 18:07 giờ VN
     - cron: "37 13 * * *"   # 20:37 giờ VN, dự phòng
+    # Bài sale 12.12 đăng buổi sáng (comment ngoài khung tối): mỗi lượt chạy 1 vòng
+    # rồi thoát (vòng lặp chỉ chạy sau 18:00). Thêm 18/11/2026 cho B42 và B44.
+    - cron: "17 2 5 12 *"   # 09:17 giờ VN 05/12 — comment B42 09:05
+    - cron: "17 4 5 12 *"   # 11:17 giờ VN 05/12 — dự phòng B42
+    - cron: "17 0 12 12 *"  # 07:17 giờ VN 12/12 — comment B44 07:05
+    - cron: "17 2 12 12 *"  # 09:17 giờ VN 12/12 — dự phòng B44
   workflow_dispatch:        # bấm chạy tay: chỉ chạy 1 lượt rồi thoát
 
 permissions:
