@@ -15,6 +15,9 @@ on:
     - cron: "17 4 5 12 *"   # 11:17 giờ VN 05/12 — dự phòng B42
     - cron: "17 0 12 12 *"  # 07:17 giờ VN 12/12 — comment B44 07:05
     - cron: "17 2 12 12 *"  # 09:17 giờ VN 12/12 — dự phòng B44
+    # B43 Reel đăng 00:00 11/12, comment 00:05 (thêm 19/11/2026).
+    - cron: "17 17 10 12 *" # 00:17 giờ VN 11/12 — comment B43 00:05
+    - cron: "17 19 10 12 *" # 02:17 giờ VN 11/12 — dự phòng B43
   workflow_dispatch:        # bấm chạy tay: chỉ chạy 1 lượt rồi thoát
 
 permissions:
